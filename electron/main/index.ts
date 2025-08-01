@@ -59,11 +59,11 @@ async function createWindow() {
 
   if (VITE_DEV_SERVER_URL) { // #298
     win.loadURL(VITE_DEV_SERVER_URL)
-    // Open devTool if the app is not packaged
-    win.webContents.openDevTools()
   } else {
     win.loadFile(indexHtml)
   }
+  // 无论开发或生产都自动打开devtools
+  win.webContents.openDevTools()
 
   // Test actively push message to the Electron-Renderer
   win.webContents.on('did-finish-load', () => {
@@ -117,4 +117,13 @@ ipcMain.handle('open-win', (_, arg) => {
   } else {
     childWindow.loadFile(indexHtml, { hash: arg })
   }
+})
+
+// 安装deb包的IPC处理
+import { exec } from 'node:child_process'
+ipcMain.handle('install-deb', async (_event, debPath: string) => {
+  console.log('test')
+  
+  await exec(`pkexec dpkg -i "${debPath}"`)
+  return 'test'
 })

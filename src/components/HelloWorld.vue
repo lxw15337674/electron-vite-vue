@@ -2,7 +2,10 @@
 import { ref } from 'vue'
 
 defineProps<{ msg: string }>()
-
+function installDeb() {
+  console.log('Installing deb package...')
+  window.ipcRenderer.invoke('install-deb')
+}
 const count = ref(0)
 </script>
 
@@ -16,6 +19,7 @@ const count = ref(0)
       <code>components/HelloWorld.vue</code> to test HMR
     </p>
   </div>
+  <button @click="installDeb">安装deb包</button>
 
   <p>
     Check out
