@@ -21,7 +21,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build && electron-builder",
+    "build": "vue-tsc --noEmit && vite build && npm run build:worker && electron-builder",
+    "build:worker": "tsc electron/workers/systemTaskWorker.ts --outDir dist-electron/workers --target es2020 --module commonjs --esModuleInterop --allowSyntheticDefaultImports --skipLibCheck && mv dist-electron/workers/systemTaskWorker.js dist-electron/workers/systemTaskWorker.cjs",
     "preview": "vite preview"
   },
   "devDependencies": {

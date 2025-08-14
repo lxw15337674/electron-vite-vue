@@ -119,11 +119,34 @@ ipcMain.handle('open-win', (_, arg) => {
   }
 })
 
-// 安装deb包的IPC处理
-import { exec } from 'node:child_process'
-ipcMain.handle('install-deb', async (_event, debPath: string) => {
-  console.log('test')
-  
-  await exec(`pkexec dpkg -i "${debPath}"`)
-  return 'test'
-})
+// 导入任务执行器
+import { taskExecutor } from './taskExecutor.js'
+
+// 注册系统任务处理器
+const systemTasks = [
+  'install-deb',
+  'update-system',
+  'install-package',
+  'manage-service',
+  'check-disk-space',
+  'get-system-info'
+];
+
+// 批量注册任务处理器
+systemTasks.forEach(taskName => {
+  ipcMain.handle(taskName, taskExecutor.createHandler(taskName));
+});
+
+// 注册日志相关的IPC处理器
+ipcMain.handle('get-worker-logs', async (_event, lines: number = 100) => {
+  return taskExecutor.getRecentLogs(lines);
+});
+
+ipcMain.handle('get-log-file-path', async (_event) => {
+  return taskExecutor.getLogFilePath();
+});
+
+// 应用退出时清理资源
+app.on('before-quit', () => {
+  taskExecutor.cleanup();
+});

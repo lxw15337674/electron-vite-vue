@@ -2,11 +2,21 @@ import fs from 'node:fs'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import electron from 'vite-plugin-electron/simple'
+import { exec } from 'node:child_process'
+import { promisify } from 'node:util'
 import pkg from './package.json'
+
+const execAsync = promisify(exec)
 
 // https://vitejs.dev/config/
 export default defineConfig(({ command }) => {
-  fs.rmSync('dist-electron', { recursive: true, force: true })
+  // 只清理main和preload目录，保留workers目录
+  if (fs.existsSync('dist-electron/main')) {
+    fs.rmSync('dist-electron/main', { recursive: true, force: true })
+  }
+  if (fs.existsSync('dist-electron/preload')) {
+    fs.rmSync('dist-electron/preload', { recursive: true, force: true })
+  }
 
   const isServe = command === 'serve'
   const isBuild = command === 'build'
@@ -19,7 +29,18 @@ export default defineConfig(({ command }) => {
         main: {
           // Shortcut of `build.lib.entry`
           entry: 'electron/main/index.ts',
-          onstart({ startup }) {
+          async onstart({ startup }) {
+            // 确保worker文件存在
+            if (!fs.existsSync('dist-electron/workers/systemTaskWorker.cjs')) {
+              console.log('Building worker process...')
+              try {
+                await execAsync('npm run build:worker')
+                console.log('Worker process built successfully')
+              } catch (error) {
+                console.error('Failed to build worker process:', error)
+              }
+            }
+
             if (process.env.VSCODE_DEBUG) {
               console.log(/* For `.vscode/.debug.script.mjs` */'[startup] Electron App')
             } else {
@@ -56,6 +77,7 @@ export default defineConfig(({ command }) => {
             },
           },
         },
+
         // Ployfill the Electron and Node.js API for Renderer process.
         // If you want use Node.js in Renderer process, the `nodeIntegration` needs to be enabled in the Main process.
         // See 👉 https://github.com/electron-vite/vite-plugin-electron-renderer
