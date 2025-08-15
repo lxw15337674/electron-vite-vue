@@ -1,4 +1,4 @@
-import { utilityProcess, MessagePortMain } from 'electron';
+import { fork, ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
@@ -20,8 +20,7 @@ export interface TaskProgress {
 }
 
 export class TaskExecutor {
-    private utilityProcess: Electron.UtilityProcess | null = null;
-    private messagePort: MessagePortMain | null = null;
+    private workerProcess: ChildProcess | null = null;
     private pendingTasks = new Map<string, {
         resolve: (value: TaskResult) => void;
         reject: (error: Error) => void;
@@ -58,55 +57,77 @@ export class TaskExecutor {
                 workerPath = path.join(__dirname, '../workers/systemTaskWorker.cjs');
             }
 
-            console.log('Utility process worker path:', workerPath);
+            console.log(`[MAIN PID:${process.pid}] Worker process path:`, workerPath);
 
-            // 创建utility process
-            this.utilityProcess = utilityProcess.fork(workerPath, [], {
-                serviceName: 'system-task-worker',
-                allowLoadingUnsignedLibraries: true,
+            // 检查文件是否存在
+            if (!fs.existsSync(workerPath)) {
+                throw new Error(`Worker file does not exist: ${workerPath}`);
+            }
+
+            // 创建子进程
+            this.workerProcess = fork(workerPath, [], {
                 env: process.env,
-                stdio: 'pipe'
+                stdio: ['pipe', 'pipe', 'pipe', 'ipc']
             });
 
-            // 创建MessageChannel进行通信
-            const { port1, port2 } = new MessageChannel();
-            this.messagePort = port1;
-
-            // 监听utility process的消息
-            this.messagePort.on('message', (event) => {
-                this.handleWorkerMessage(event.data);
+            // 监听来自worker的消息
+            this.workerProcess.on('message', (message: any) => {
+                console.log(`[MAIN PID:${process.pid}] Received message from worker PID:${this.workerProcess?.pid} -`, message.type);
+                this.writeToLogFile(`[MAIN PID:${process.pid}] Received message from worker PID:${this.workerProcess?.pid} - ${message.type}\n`);
+                this.handleWorkerMessage(message);
             });
 
-            // 监听utility process的错误
-            this.utilityProcess.on('exit', (code) => {
-                console.log(`Utility process exited with code ${code}`);
+            // 监听进程退出
+            this.workerProcess.on('exit', (code) => {
+                console.log(`[MAIN PID:${process.pid}] Worker PID:${this.workerProcess?.pid} exited with code ${code}`);
+                this.writeToLogFile(`[MAIN PID:${process.pid}] Worker PID:${this.workerProcess?.pid} exited with code ${code}\n`);
                 if (code !== 0 && !this.restartCooldown) {
                     this.restartWorker();
                 }
             });
 
-            // 发送MessagePort给utility process
-            this.utilityProcess.postMessage({ type: 'init', port: port2 }, [port2]);
+            // 监听进程错误
+            this.workerProcess.on('error', (error) => {
+                console.error(`[MAIN PID:${process.pid}] Worker PID:${this.workerProcess?.pid} error:`, error);
+                this.writeToLogFile(`[MAIN PID:${process.pid}] Worker PID:${this.workerProcess?.pid} error: ${error.message}\n`);
+            });
 
-            console.log('Utility process task worker initialized successfully');
+            // 监听stdout和stderr
+            if (this.workerProcess.stdout) {
+                this.workerProcess.stdout.on('data', (data) => {
+                    console.log(`[MAIN PID:${process.pid}] Worker PID:${this.workerProcess?.pid} stdout:`, data.toString());
+                    this.writeToLogFile(`[MAIN PID:${process.pid}] Worker PID:${this.workerProcess?.pid} stdout: ${data.toString()}`);
+                });
+            }
+
+            if (this.workerProcess.stderr) {
+                this.workerProcess.stderr.on('data', (data) => {
+                    console.error(`[MAIN PID:${process.pid}] Worker PID:${this.workerProcess?.pid} stderr:`, data.toString());
+                    this.writeToLogFile(`[MAIN PID:${process.pid}] Worker PID:${this.workerProcess?.pid} stderr: ${data.toString()}`);
+                });
+            }
+
+            console.log(`[MAIN PID:${process.pid}] Worker process initialized successfully with PID:${this.workerProcess.pid}`);
+            this.writeToLogFile(`[MAIN PID:${process.pid}] Worker process initialized successfully with PID:${this.workerProcess.pid}\n`);
 
             // 重置重启计数器，因为worker成功启动了
             this.restartAttempts = 0;
             this.restartCooldown = false;
         } catch (error) {
-            console.error('Failed to initialize utility process worker:', error);
+            console.error(`[MAIN PID:${process.pid}] Failed to initialize worker process:`, error);
+            this.writeToLogFile(`[MAIN PID:${process.pid}] Failed to initialize worker process: ${error.message}\n`);
         }
     }
 
     private restartWorker() {
         if (this.restartAttempts >= this.maxRestartAttempts) {
-            console.error('Max restart attempts reached. Stopping worker restart.');
+            console.error(`[MAIN PID:${process.pid}] Max restart attempts reached. Stopping worker restart.`);
             this.restartCooldown = true;
             return;
         }
 
         this.restartAttempts++;
-        console.log(`Restarting worker process... (attempt ${this.restartAttempts}/${this.maxRestartAttempts})`);
+        console.log(`[MAIN PID:${process.pid}] Restarting worker process... (attempt ${this.restartAttempts}/${this.maxRestartAttempts})`);
 
         this.cleanup();
 
@@ -129,11 +150,15 @@ export class TaskExecutor {
                 this.pendingTasks.delete(taskId);
 
                 if (type === 'task-complete') {
+                    console.log(`[MAIN PID:${process.pid}] Task completed from worker PID:${this.workerProcess?.pid} - ${taskId}`);
+                    this.writeToLogFile(`[MAIN PID:${process.pid}] Task completed from worker PID:${this.workerProcess?.pid} - ${taskId}\n`);
                     pendingTask.resolve({
                         success: true,
                         data: result
                     });
                 } else {
+                    console.log(`[MAIN PID:${process.pid}] Task failed from worker PID:${this.workerProcess?.pid} - ${taskId} - ${error}`);
+                    this.writeToLogFile(`[MAIN PID:${process.pid}] Task failed from worker PID:${this.workerProcess?.pid} - ${taskId} - ${error}\n`);
                     pendingTask.resolve({
                         success: false,
                         error: error,
@@ -146,12 +171,12 @@ export class TaskExecutor {
 
     async executeTask(taskName: string, ...args: any[]): Promise<TaskResult> {
         return new Promise((resolve, reject) => {
-            if (!this.utilityProcess || !this.messagePort || this.restartCooldown) {
+            if (!this.workerProcess || this.restartCooldown) {
                 resolve({
                     success: false,
                     error: this.restartCooldown ? 
-                        'Utility process is in cooldown after multiple failures' :
-                        'Utility process not available'
+                        'Worker process is in cooldown after multiple failures' :
+                        'Worker process not available'
                 });
                 return;
             }
@@ -170,8 +195,10 @@ export class TaskExecutor {
 
             this.pendingTasks.set(taskId, { resolve, reject, timeout });
 
-            // 通过MessagePort发送任务到utility process
-            this.messagePort.postMessage({
+            // 通过IPC发送任务到worker process
+            console.log(`[MAIN PID:${process.pid}] Sending task to worker PID:${this.workerProcess.pid} - ${taskName} (${taskId})`);
+            this.writeToLogFile(`[MAIN PID:${process.pid}] Sending task to worker PID:${this.workerProcess.pid} - ${taskName} (${taskId})\n`);
+            this.workerProcess.send({
                 type: 'execute-task',
                 taskId,
                 taskName,
@@ -222,25 +249,19 @@ export class TaskExecutor {
 
     cleanup() {
         // 清理所有待处理的任务
-        for (const [taskId, task] of this.pendingTasks) {
+        Array.from(this.pendingTasks.entries()).forEach(([taskId, task]) => {
             clearTimeout(task.timeout);
             task.resolve({
                 success: false,
                 error: 'Task executor shutting down'
             });
-        }
+        });
         this.pendingTasks.clear();
 
-        // 关闭MessagePort
-        if (this.messagePort) {
-            this.messagePort.close();
-            this.messagePort = null;
-        }
-
-        // 关闭utility process
-        if (this.utilityProcess) {
-            this.utilityProcess.kill();
-            this.utilityProcess = null;
+        // 关闭worker process
+        if (this.workerProcess) {
+            this.workerProcess.kill();
+            this.workerProcess = null;
         }
     }
 }

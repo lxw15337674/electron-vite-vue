@@ -1,6 +1,5 @@
 import { exec, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { MessagePort } from 'node:worker_threads';
 
 const execAsync = promisify(exec);
 
@@ -11,8 +10,6 @@ interface TaskMessage {
   args: any[];
 }
 
-// MessagePort for communication with main process
-let messagePort: MessagePort | null = null;
 
 // 任务注册表
 const taskRegistry = new Map<string, (...args: any[]) => Promise<any>>();
@@ -25,17 +22,17 @@ function registerTask(taskName: string, handler: (...args: any[]) => Promise<any
 // 日志记录函数
 function logInfo(message: string, data?: any) {
   const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] [INFO] ${message}`, data ? JSON.stringify(data, null, 2) : '');
+  console.log(`[${timestamp}] [WORKER PID:${process.pid}] [INFO] ${message}`, data ? JSON.stringify(data, null, 2) : '');
 }
 
 function logError(message: string, error?: any) {
   const timestamp = new Date().toISOString();
-  console.error(`[${timestamp}] [ERROR] ${message}`, error);
+  console.error(`[${timestamp}] [WORKER PID:${process.pid}] [ERROR] ${message}`, error);
 }
 
 function logDebug(message: string, data?: any) {
   const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] [DEBUG] ${message}`, data ? JSON.stringify(data, null, 2) : '');
+  console.log(`[${timestamp}] [WORKER PID:${process.pid}] [DEBUG] ${message}`, data ? JSON.stringify(data, null, 2) : '');
 }
 
 // 执行系统命令的通用函数
@@ -159,13 +156,9 @@ registerTask('get-system-info', async (): Promise<any> => {
 
 // 处理来自主进程的消息
 function handleMessage(message: any) {
-  if (message.type === 'init' && message.port) {
-    // 初始化MessagePort连接
-    messagePort = message.port;
-    messagePort.on('message', handleTaskMessage);
-    messagePort.start();
-    logInfo('MessagePort initialized successfully');
-    return;
+  if (message.type === 'execute-task') {
+    // 直接处理任务消息
+    handleTaskMessage(message);
   }
 }
 
@@ -199,8 +192,9 @@ async function handleTaskMessage(message: TaskMessage) {
           Array.isArray(result) ? result.length : 'N/A'
       });
 
-      // 通过MessagePort发送成功结果
-      messagePort?.postMessage({
+      // 通过process.send发送成功结果
+      logInfo(`Sending task completion to main process`, { taskId, taskName });
+      process.send?.({
         type: 'task-complete',
         taskId,
         result
@@ -214,8 +208,9 @@ async function handleTaskMessage(message: TaskMessage) {
         code: error.code 
       });
 
-      // 通过MessagePort发送错误结果
-      messagePort?.postMessage({
+      // 通过process.send发送错误结果
+      logInfo(`Sending task error to main process`, { taskId, taskName, error: error.message });
+      process.send?.({
         type: 'task-error',
         taskId,
         error: error.message,
