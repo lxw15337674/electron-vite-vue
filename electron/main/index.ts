@@ -119,27 +119,35 @@ ipcMain.handle('open-win', (_, arg) => {
   }
 })
 
-// 导入任务执行器
-import { taskExecutor } from './taskExecutor.js'
+// 导入任务执行器和新的任务管理器
+import { taskExecutor, taskManager } from './taskExecutor.js'
 
-// 注册系统任务处理器
-const systemTasks = [
-  'install-deb',
-  'update-system',
-  'install-package',
-  'manage-service',
-  'check-disk-space',
-  'get-system-info'
-];
-
-// 批量注册任务处理器
-systemTasks.forEach(taskName => {
-  ipcMain.handle(taskName, taskExecutor.createHandler(taskName));
+ipcMain.handle('install-deb', async (_event, debPath: string) => {
+  return taskManager.installDeb(debPath);
 });
 
-// 注册日志相关的IPC处理器
+ipcMain.handle('update-system', async (_event) => {
+  return taskManager.updateSystem();
+});
+
+ipcMain.handle('install-package', async (_event, packageName: string) => {
+  return taskManager.installPackage(packageName);
+});
+
+ipcMain.handle('manage-service', async (_event, serviceName: string, action: string) => {
+  return taskManager.manageService(serviceName, action as any);
+});
+
+ipcMain.handle('check-disk-space', async (_event) => {
+  return taskManager.checkDiskSpace();
+});
+
+ipcMain.handle('get-system-info', async (_event) => {
+  return taskManager.getSystemInfo();
+});
+
 ipcMain.handle('get-worker-logs', async (_event, lines: number = 100) => {
-  return taskExecutor.getRecentLogs(lines);
+  return taskManager.getRecentLogs(lines);
 });
 
 ipcMain.handle('get-log-file-path', async (_event) => {
@@ -148,5 +156,5 @@ ipcMain.handle('get-log-file-path', async (_event) => {
 
 // 应用退出时清理资源
 app.on('before-quit', () => {
-  taskExecutor.cleanup();
+  taskManager.dispose();
 });

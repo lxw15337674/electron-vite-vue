@@ -1,5 +1,6 @@
 import { exec, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
+import { getDate } from './utils';
 
 const execAsync = promisify(exec);
 
@@ -139,7 +140,7 @@ registerTask('check-disk-space', async (): Promise<any> => {
 
 registerTask('get-system-info', async (): Promise<any> => {
   console.log('Getting system information...');
-
+  console.log(getDate())
   const [osInfo, memInfo, cpuInfo] = await Promise.all([
     executeCommand('lsb_release -a 2>/dev/null || cat /etc/os-release'),
     executeCommand('free -h'),

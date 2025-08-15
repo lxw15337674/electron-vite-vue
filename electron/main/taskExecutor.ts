@@ -5,18 +5,39 @@ import fs from 'node:fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export interface TaskResult {
+// 类型定义
+export interface TaskResult<T = any> {
     success: boolean;
-    data?: any;
+    data?: T;
     error?: string;
     code?: number;
 }
 
-export interface TaskProgress {
-    taskId: string;
-    status: 'pending' | 'running' | 'completed' | 'failed';
-    progress?: number;
-    message?: string;
+export interface TaskExecutionOptions {
+    timeout?: number;
+}
+
+export interface DiskInfo {
+    filesystem: string;
+    size: string;
+    used: string;
+    available: string;
+    usePercent: string;
+    mounted: string;
+}
+
+export interface SystemInfo {
+    platform: string;
+    arch: string;
+    nodeVersion: string;
+    uptime: number;
+    memoryUsage: {
+        rss: number;
+        heapTotal: number;
+        heapUsed: number;
+        external: number;
+        arrayBuffers: number;
+    };
 }
 
 export class TaskExecutor {
@@ -129,7 +150,7 @@ export class TaskExecutor {
         this.restartAttempts++;
         console.log(`[MAIN PID:${process.pid}] Restarting worker process... (attempt ${this.restartAttempts}/${this.maxRestartAttempts})`);
 
-        this.cleanup();
+        this.cleanupWorker();
 
         // 增加重启延迟
         const delay = Math.min(1000 * this.restartAttempts, 10000); // 最多10秒延迟
@@ -169,7 +190,36 @@ export class TaskExecutor {
         }
     }
 
-    async executeTask(taskName: string, ...args: any[]): Promise<TaskResult> {
+    // 公共方法
+    async execute<T = any>(taskName: string, ...args: any[]): Promise<TaskResult<T>> {
+        return this.executeTaskInternal(taskName, {}, ...args) as Promise<TaskResult<T>>;
+    }
+
+    async executeWithOptions<T = any>(
+        taskName: string,
+        options: TaskExecutionOptions,
+        ...args: any[]
+    ): Promise<TaskResult<T>> {
+        return this.executeTaskInternal(taskName, options, ...args) as Promise<TaskResult<T>>;
+    }
+
+    isAvailable(): boolean {
+        return !!(this.workerProcess && !this.restartCooldown);
+    }
+
+    getRecentLogs(lines: number = 100): string[] {
+        try {
+            const content = fs.readFileSync(this.logFilePath, 'utf-8');
+            const allLines = content.split('\n').filter(line => line.trim());
+            return allLines.slice(-lines);
+        } catch (error) {
+            console.error('Failed to read log file:', error);
+            return [];
+        }
+    }
+
+    // 私有方法：实际的任务执行逻辑
+    private async executeTaskInternal(taskName: string, options: TaskExecutionOptions = {}, ...args: any[]): Promise<TaskResult> {
         return new Promise((resolve, reject) => {
             if (!this.workerProcess || this.restartCooldown) {
                 resolve({
@@ -182,18 +232,19 @@ export class TaskExecutor {
             }
 
             const taskId = `task-${++this.taskIdCounter}-${Date.now()}`;
+            const timeout = options.timeout || 30000; // 默认30秒超时
 
-            // 设置超时（30秒）
-            const timeout = setTimeout(() => {
+            // 设置超时
+            const timeoutHandle = setTimeout(() => {
                 this.pendingTasks.delete(taskId);
                 resolve({
                     success: false,
                     error: 'Task timeout',
                     code: -1
                 });
-            }, 30000);
+            }, timeout);
 
-            this.pendingTasks.set(taskId, { resolve, reject, timeout });
+            this.pendingTasks.set(taskId, { resolve, reject, timeout: timeoutHandle });
 
             // 通过IPC发送任务到worker process
             console.log(`[MAIN PID:${process.pid}] Sending task to worker PID:${this.workerProcess.pid} - ${taskName} (${taskId})`);
@@ -219,35 +270,15 @@ export class TaskExecutor {
         return this.logFilePath;
     }
 
-    getRecentLogs(lines: number = 100): string[] {
-        try {
-            const content = fs.readFileSync(this.logFilePath, 'utf-8');
-            const allLines = content.split('\n').filter(line => line.trim());
-            return allLines.slice(-lines);
-        } catch (error) {
-            console.error('Failed to read log file:', error);
-            return [];
+    private cleanupWorker() {
+        // 关闭worker process（用于重启时）
+        if (this.workerProcess) {
+            this.workerProcess.kill();
+            this.workerProcess = null;
         }
     }
 
-    createHandler(taskName: string) {
-        return async (_event: any, ...args: any[]) => {
-            try {
-                const result = await this.executeTask(taskName, ...args);
-
-                if (result.success) {
-                    return result.data;
-                } else {
-                    throw new Error(result.error || 'Task execution failed');
-                }
-            } catch (error) {
-                console.error(`Task ${taskName} failed:`, error);
-                throw error;
-            }
-        };
-    }
-
-    cleanup() {
+    dispose() {
         // 清理所有待处理的任务
         Array.from(this.pendingTasks.entries()).forEach(([taskId, task]) => {
             clearTimeout(task.timeout);
@@ -259,12 +290,16 @@ export class TaskExecutor {
         this.pendingTasks.clear();
 
         // 关闭worker process
-        if (this.workerProcess) {
-            this.workerProcess.kill();
-            this.workerProcess = null;
-        }
+        this.cleanupWorker();
     }
 }
 
 // 单例实例
 export const taskExecutor = new TaskExecutor();
+
+// 导出 TaskManager
+export { TaskManager } from './TaskManager.js';
+
+// 创建简化的任务管理器实例
+import { TaskManager } from './TaskManager.js';
+export const taskManager = new TaskManager(taskExecutor);

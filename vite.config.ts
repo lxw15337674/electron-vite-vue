@@ -4,6 +4,8 @@ import vue from '@vitejs/plugin-vue'
 import electron from 'vite-plugin-electron/simple'
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
+import { watch } from 'node:fs'
+import path from 'node:path'
 import pkg from './package.json'
 
 const execAsync = promisify(exec)
@@ -22,6 +24,43 @@ export default defineConfig(({ command }) => {
   const isBuild = command === 'build'
   const sourcemap = isServe || !!process.env.VSCODE_DEBUG
 
+  // Worker 热编译函数
+  const buildWorker = async () => {
+    console.log('🔄 Building worker process...')
+    try {
+      await execAsync('npm run build:worker')
+      console.log('✅ Worker process built successfully')
+      return true
+    } catch (error) {
+      console.error('❌ Failed to build worker process:', error)
+      return false
+    }
+  }
+
+  // 开发模式下启动 worker 文件监听
+  if (isServe) {
+    const workerSourcePath = path.resolve('electron/workers/systemTaskWorker.ts')
+
+    let buildTimeout: NodeJS.Timeout | null = null
+
+    // 监听 worker 源文件变化
+    watch(workerSourcePath, (eventType) => {
+      if (eventType === 'change') {
+        // 防抖：避免快速连续修改导致多次编译
+        if (buildTimeout) {
+          clearTimeout(buildTimeout)
+        }
+
+        buildTimeout = setTimeout(async () => {
+          console.log('📝 Worker source changed, rebuilding...')
+          await buildWorker()
+        }, 500)
+      }
+    })
+
+    console.log('👀 Watching worker file:', workerSourcePath)
+  }
+
   return {
     plugins: [
       vue(),
@@ -32,13 +71,7 @@ export default defineConfig(({ command }) => {
           async onstart({ startup }) {
             // 确保worker文件存在
             if (!fs.existsSync('dist-electron/workers/systemTaskWorker.cjs')) {
-              console.log('Building worker process...')
-              try {
-                await execAsync('npm run build:worker')
-                console.log('Worker process built successfully')
-              } catch (error) {
-                console.error('Failed to build worker process:', error)
-              }
+              await buildWorker()
             }
 
             if (process.env.VSCODE_DEBUG) {

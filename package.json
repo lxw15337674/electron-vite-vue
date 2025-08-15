@@ -22,13 +22,16 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build && npm run build:worker && electron-builder",
-    "build:worker": "tsc electron/workers/systemTaskWorker.ts --outDir dist-electron/workers --target es2020 --module commonjs --esModuleInterop --allowSyntheticDefaultImports --skipLibCheck && mv dist-electron/workers/systemTaskWorker.js dist-electron/workers/systemTaskWorker.cjs",
+    "build:worker": "esbuild electron/workers/systemTaskWorker.ts --bundle --platform=node --target=node16 --format=cjs --outfile=dist-electron/workers/systemTaskWorker.cjs --external:electron",
+    "build:worker:tsc": "tsc electron/workers/systemTaskWorker.ts --outDir dist-electron/workers --target es2020 --module commonjs --esModuleInterop --allowSyntheticDefaultImports --skipLibCheck && mv dist-electron/workers/systemTaskWorker.js dist-electron/workers/systemTaskWorker.cjs",
     "preview": "vite preview"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.4",
+    "date-fns": "^4.1.0",
     "electron": "^29.1.1",
     "electron-builder": "^24.13.3",
+    "esbuild": "^0.25.9",
     "typescript": "^5.4.2",
     "vite": "^5.1.5",
     "vite-plugin-electron": "^0.28.4",
