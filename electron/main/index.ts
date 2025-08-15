@@ -4,7 +4,6 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import os from 'node:os'
 
-const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // The built directory structure
@@ -119,42 +118,31 @@ ipcMain.handle('open-win', (_, arg) => {
   }
 })
 
-// 导入任务执行器和新的任务管理器
-import { taskExecutor, taskManager } from './taskExecutor.js'
+// 导入任务执行器
+import { taskExecutor } from './taskExecutor.js'
 
 ipcMain.handle('install-deb', async (_event, debPath: string) => {
-  return taskManager.installDeb(debPath);
+  return taskExecutor.executeAndThrow<string>('install-deb', debPath);
 });
 
-ipcMain.handle('update-system', async (_event) => {
-  return taskManager.updateSystem();
-});
 
 ipcMain.handle('install-package', async (_event, packageName: string) => {
-  return taskManager.installPackage(packageName);
+  return taskExecutor.executeAndThrow<string>('install-package', packageName);
 });
 
 ipcMain.handle('manage-service', async (_event, serviceName: string, action: string) => {
-  return taskManager.manageService(serviceName, action as any);
+  return taskExecutor.executeAndThrow<string>('manage-service', serviceName, action);
 });
 
 ipcMain.handle('check-disk-space', async (_event) => {
-  return taskManager.checkDiskSpace();
+  return taskExecutor.executeAndThrow('check-disk-space');
 });
 
 ipcMain.handle('get-system-info', async (_event) => {
-  return taskManager.getSystemInfo();
-});
-
-ipcMain.handle('get-worker-logs', async (_event, lines: number = 100) => {
-  return taskManager.getRecentLogs(lines);
-});
-
-ipcMain.handle('get-log-file-path', async (_event) => {
-  return taskExecutor.getLogFilePath();
+  return taskExecutor.executeAndThrow('get-system-info');
 });
 
 // 应用退出时清理资源
 app.on('before-quit', () => {
-  taskManager.dispose();
+  taskExecutor.dispose();
 });

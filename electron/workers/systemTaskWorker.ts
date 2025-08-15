@@ -1,6 +1,5 @@
 import { exec, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { getDate } from './utils';
 
 const execAsync = promisify(exec);
 
@@ -21,39 +20,20 @@ function registerTask(taskName: string, handler: (...args: any[]) => Promise<any
 }
 
 // 日志记录函数
-function logInfo(message: string, data?: any) {
-  const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] [WORKER PID:${process.pid}] [INFO] ${message}`, data ? JSON.stringify(data, null, 2) : '');
-}
-
 function logError(message: string, error?: any) {
   const timestamp = new Date().toISOString();
   console.error(`[${timestamp}] [WORKER PID:${process.pid}] [ERROR] ${message}`, error);
-}
-
-function logDebug(message: string, data?: any) {
-  const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] [WORKER PID:${process.pid}] [DEBUG] ${message}`, data ? JSON.stringify(data, null, 2) : '');
 }
 
 // 执行系统命令的通用函数
 async function executeCommand(command: string, options: { timeout?: number } = {}): Promise<string> {
   try {
     const { timeout = 30000 } = options;
-    logInfo(`Executing command: ${command}`);
-    logDebug('Command options:', { timeout, maxBuffer: '10MB' });
 
     const { stdout, stderr } = await execAsync(command, {
       timeout,
       maxBuffer: 1024 * 1024 * 10 // 10MB buffer
     });
-
-    if (stderr && stderr.trim()) {
-      logInfo('Command stderr output:', stderr);
-    }
-
-    logInfo('Command executed successfully');
-    logDebug('Command stdout length:', stdout.length);
 
     return stdout.trim();
   } catch (error: any) {
@@ -64,8 +44,6 @@ async function executeCommand(command: string, options: { timeout?: number } = {
 
 // 注册具体的任务实现
 registerTask('install-deb', async (debPath: string): Promise<string> => {
-  logInfo('Starting install-deb task', { debPath });
-
   if (!debPath || typeof debPath !== 'string') {
     logError('Invalid deb path provided', { debPath, type: typeof debPath });
     throw new Error('Invalid deb path provided');
@@ -77,14 +55,11 @@ registerTask('install-deb', async (debPath: string): Promise<string> => {
     throw new Error('File must be a .deb package');
   }
 
-  logInfo(`Installing deb package: ${debPath}`);
   const result = await executeCommand(`pkexec dpkg -i "${debPath}"`);
-  logInfo('Deb package installed successfully', { debPath });
   return `Successfully installed: ${debPath}`;
 });
 
 registerTask('update-system', async (): Promise<string> => {
-  console.log('Updating system packages...');
   const result = await executeCommand('pkexec apt update && pkexec apt upgrade -y', { timeout: 300000 }); // 5分钟超时
   return 'System update completed successfully';
 });
@@ -94,7 +69,6 @@ registerTask('install-package', async (packageName: string): Promise<string> => 
     throw new Error('Invalid package name provided');
   }
 
-  console.log(`Installing package: ${packageName}`);
   const result = await executeCommand(`pkexec apt install -y "${packageName}"`);
   return `Successfully installed package: ${packageName}`;
 });
@@ -109,13 +83,11 @@ registerTask('manage-service', async (serviceName: string, action: string): Prom
     throw new Error(`Invalid action. Must be one of: ${validActions.join(', ')}`);
   }
 
-  console.log(`Managing service ${serviceName}: ${action}`);
   const result = await executeCommand(`pkexec systemctl ${action} "${serviceName}"`);
   return `Service ${serviceName} ${action} completed`;
 });
 
 registerTask('check-disk-space', async (): Promise<any> => {
-  console.log('Checking disk space...');
   const result = await executeCommand('df -h');
 
   // 解析df输出
@@ -134,13 +106,11 @@ registerTask('check-disk-space', async (): Promise<any> => {
     }
     return null;
   }).filter(Boolean);
-
+  console.log('check-disk-space', diskInfo);
   return diskInfo;
 });
 
 registerTask('get-system-info', async (): Promise<any> => {
-  console.log('Getting system information...');
-  console.log(getDate())
   const [osInfo, memInfo, cpuInfo] = await Promise.all([
     executeCommand('lsb_release -a 2>/dev/null || cat /etc/os-release'),
     executeCommand('free -h'),
@@ -167,12 +137,8 @@ function handleMessage(message: any) {
 async function handleTaskMessage(message: TaskMessage) {
   const { type, taskId, taskName, args } = message;
 
-  logInfo('Received task message from main process', { type, taskId, taskName, argsCount: args?.length });
-
   if (type === 'execute-task') {
     try {
-      logInfo(`Executing task: ${taskName}`, { taskId, args });
-
       const handler = taskRegistry.get(taskName);
       if (!handler) {
         const error = `Unknown task: ${taskName}`;
@@ -180,21 +146,9 @@ async function handleTaskMessage(message: TaskMessage) {
         throw new Error(error);
       }
 
-      const startTime = Date.now();
       const result = await handler(...args);
-      const duration = Date.now() - startTime;
-
-      logInfo(`Task completed successfully`, {
-        taskName,
-        taskId, 
-        duration: `${duration}ms`,
-        resultType: typeof result,
-        resultSize: typeof result === 'string' ? result.length :
-          Array.isArray(result) ? result.length : 'N/A'
-      });
 
       // 通过process.send发送成功结果
-      logInfo(`Sending task completion to main process`, { taskId, taskName });
       process.send?.({
         type: 'task-complete',
         taskId,
@@ -210,7 +164,6 @@ async function handleTaskMessage(message: TaskMessage) {
       });
 
       // 通过process.send发送错误结果
-      logInfo(`Sending task error to main process`, { taskId, taskName, error: error.message });
       process.send?.({
         type: 'task-error',
         taskId,
@@ -236,25 +189,3 @@ process.on('unhandledRejection', (reason, promise) => {
   logError('Unhandled rejection in worker', { reason, promise });
   process.exit(1);
 });
-
-// 启动信息
-logInfo('System task worker started successfully', {
-  pid: process.pid,
-  nodeVersion: process.version,
-  platform: process.platform,
-  arch: process.arch
-});
-
-logInfo('Registered tasks', {
-  tasks: Array.from(taskRegistry.keys()),
-  totalCount: taskRegistry.size
-});
-
-// 定期输出健康状态（每5分钟）
-setInterval(() => {
-  logDebug('Worker health check', {
-    uptime: process.uptime(),
-    memoryUsage: process.memoryUsage(),
-    pid: process.pid
-  });
-}, 5 * 60 * 1000);
